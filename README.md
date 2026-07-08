@@ -1,4 +1,4 @@
-# Gỡ bỏ Font & Tối ưu dung lượng PDF
+# Xoá Font Trong File PDF
 
 Công cụ web thuần **Client-side** giúp quét, gỡ bỏ dữ liệu font nhúng từ các tệp PDF nhằm **giảm dung lượng** tệp tin trực tiếp trên trình duyệt.
 
