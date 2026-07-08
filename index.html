@@ -61,7 +61,7 @@
         .drop-zone {
             border: 2px dashed #007bff;
             border-radius: 0.5rem;
-            padding: 0.5rem;
+            padding: 1.5rem 0.5rem;
             text-align: center;
             background-color: #ffffff;
             cursor: pointer;
@@ -160,6 +160,13 @@
     
     <!-- Khung kéo thả file (Click vào cũng có thể chọn file) -->
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('pdfFile').click()">
+        <!-- Biểu tượng file PDF kéo thả trực quan -->
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#007bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 0.5rem;">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="12" y1="18" x2="12" y2="12"></line>
+            <polyline points="9 15 12 12 15 15"></polyline>
+        </svg>
         <p>Kéo thả file PDF vào đây hoặc click để chọn file</p>
         <span id="fileNameDisplay">Chấp nhận định dạng .pdf</span>
         <input type="file" id="pdfFile" accept=".pdf" style="display: none;" onchange="handleFileSelect(this.files)">
@@ -179,6 +186,7 @@
     let globalPdfDoc = null;
     let foundFonts = [];
     let currentDownloadUrl = null;
+    let uploadedFileSize = 0;
 
     const dropZone = document.getElementById('dropZone');
     const fileNameDisplay = document.getElementById('fileNameDisplay');
@@ -186,21 +194,28 @@
     const fontListArea = document.getElementById('fontListArea');
     const fontListDiv = document.getElementById('fontList');
 
-    // Thiết lập sự kiện Kéo - Thả
-    ['dragenter', 'dragover'].forEach(evt => {
+    // Chặn tuyệt đối hành vi mặc định của trình duyệt để tránh tự động mở file PDF khi kéo thả sai vị trí
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt => {
         dropZone.addEventListener(evt, (e) => {
             e.preventDefault();
+            e.stopPropagation();
+        });
+    });
+
+    // Thiết lập hiệu ứng trực quan đổi màu viền khi kéo file vào/ra
+    ['dragenter', 'dragover'].forEach(evt => {
+        dropZone.addEventListener(evt, () => {
             dropZone.classList.add('dragover');
         });
     });
 
     ['dragleave', 'drop'].forEach(evt => {
-        dropZone.addEventListener(evt, (e) => {
-            e.preventDefault();
+        dropZone.addEventListener(evt, () => {
             dropZone.classList.remove('dragover');
         });
     });
 
+    // Xử lý sự kiện khi thả file vào vùng chọn
     dropZone.addEventListener('drop', (e) => {
         const files = e.dataTransfer.files;
         if (files.length > 0) {
@@ -214,6 +229,7 @@
     function resetApp() {
         globalPdfDoc = null;
         foundFonts = [];
+        uploadedFileSize = 0;
         fontListArea.style.display = 'none';
         statusDiv.innerHTML = '';
         fileNameDisplay.innerHTML = 'Chấp nhận định dạng .pdf';
@@ -224,85 +240,93 @@
         }
     }
 
+    // Hàm quét và hiển thị danh sách font từ tài liệu PDF hiện hành trong bộ nhớ
+    function scanAndRenderFonts() {
+        foundFonts = [];
+        const context = globalPdfDoc.context;
+        const indirectObjects = context.enumerateIndirectObjects();
+        let fontCounter = 1;
+
+        for (const [ref, obj] of indirectObjects) {
+            if (obj instanceof PDFLib.PDFDict && obj.get(PDFLib.PDFName.of('Type')) === PDFLib.PDFName.of('FontDescriptor')) {
+                const fontNameObj = obj.get(PDFLib.PDFName.of('FontName'));
+                if (fontNameObj) {
+                    let fontName = fontNameObj.toString();
+                    if (fontName.includes('+')) {
+                        fontName = fontName.split('+')[1];
+                    }
+
+                    let isEmbedded = false;
+                    const embeddedKeys = ['FontFile', 'FontFile2', 'FontFile3'];
+                    embeddedKeys.forEach(key => {
+                        if (obj.has(PDFLib.PDFName.of(key))) {
+                            isEmbedded = true;
+                        }
+                    });
+
+                    foundFonts.push({
+                        id: fontCounter++,
+                        name: fontName,
+                        descriptorObj: obj,
+                        isEmbedded: isEmbedded
+                    });
+                }
+            }
+        }
+
+        if (foundFonts.length === 0) {
+            statusDiv.innerHTML = "<span style='color: orange;'>Không tìm thấy cấu trúc font nào trong tài liệu này.</span>";
+            fontListArea.style.display = 'none';
+            return;
+        }
+
+        fontListDiv.innerHTML = '';
+        foundFonts.forEach(font => {
+            const badge = font.isEmbedded 
+                ? `<span class="badge badge-embedded">Có dữ liệu nhúng</span>` 
+                : `<span class="badge badge-reference">Chỉ tham chiếu (Không nhúng)</span>`;
+            
+            const checkbox = font.isEmbedded
+                ? `<input type="checkbox" class="font-checkbox" value="${font.id}" id="chk-${font.id}">`
+                : `<input type="checkbox" disabled id="chk-${font.id}">`;
+
+            fontListDiv.innerHTML += `
+                <div class="font-item">
+                    <label for="chk-${font.id}">
+                        ${checkbox}
+                        <span><strong>${font.id}.</strong> ${font.name}</span>
+                    </label>
+                    ${badge}
+                </div>
+            `;
+        });
+
+        fontListArea.style.display = 'block';
+    }
+
     // Xử lý đọc file và tự động quét font ngay lập tức
     async function handleFileSelect(files) {
         if (files.length === 0) return;
         const file = files[0];
         
-        if (file.type !== "application/pdf") {
+        // Kiểm tra loại tệp tương thích đa nền tảng (MIME Type hoặc đuôi mở rộng)
+        const isPDF = file.type === "application/pdf" || file.name.toLowerCase().endsWith('.pdf');
+        if (!isPDF) {
             resetApp();
             statusDiv.innerHTML = "<span style='color: red;'>Vui lòng chọn đúng định dạng file .pdf</span>";
             return;
         }
 
         resetApp();
+        uploadedFileSize = file.size;
         fileNameDisplay.innerHTML = `<strong>File đang chọn:</strong> ${file.name}`;
         statusDiv.innerHTML = "Đang quét các đối tượng Font...";
 
         try {
             const arrayBuffer = await file.arrayBuffer();
             globalPdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
-            
-            const context = globalPdfDoc.context;
-            const indirectObjects = context.enumerateIndirectObjects();
-            let fontCounter = 1;
-
-            for (const [ref, obj] of indirectObjects) {
-                if (obj instanceof PDFLib.PDFDict && obj.get(PDFLib.PDFName.of('Type')) === PDFLib.PDFName.of('FontDescriptor')) {
-                    const fontNameObj = obj.get(PDFLib.PDFName.of('FontName'));
-                    if (fontNameObj) {
-                        let fontName = fontNameObj.toString();
-                        if (fontName.includes('+')) {
-                            fontName = fontName.split('+')[1];
-                        }
-
-                        let isEmbedded = false;
-                        const embeddedKeys = ['FontFile', 'FontFile2', 'FontFile3'];
-                        embeddedKeys.forEach(key => {
-                            if (obj.has(PDFLib.PDFName.of(key))) {
-                                isEmbedded = true;
-                            }
-                        });
-
-                        foundFonts.push({
-                            id: fontCounter++,
-                            name: fontName,
-                            descriptorObj: obj,
-                            isEmbedded: isEmbedded
-                        });
-                    }
-                }
-            }
-
-            if (foundFonts.length === 0) {
-                statusDiv.innerHTML = "<span style='color: orange;'>Không tìm thấy font nhúng nào trong tài liệu này.</span>";
-                return;
-            }
-
-            fontListDiv.innerHTML = '';
-            foundFonts.forEach(font => {
-                const badge = font.isEmbedded 
-                    ? `<span class="badge badge-embedded">Có dữ liệu nhúng</span>` 
-                    : `<span class="badge badge-reference">Chỉ tham chiếu (Không nhúng)</span>`;
-                
-                const checkbox = font.isEmbedded
-                    ? `<input type="checkbox" class="font-checkbox" value="${font.id}" id="chk-${font.id}">`
-                    : `<input type="checkbox" disabled id="chk-${font.id}">`;
-
-                fontListDiv.innerHTML += `
-                    <div class="font-item">
-                        <label for="chk-${font.id}">
-                            ${checkbox}
-                            <span><strong>${font.id}.</strong> ${font.name}</span>
-                        </label>
-                        ${badge}
-                    </div>
-                `;
-            });
-
+            scanAndRenderFonts();
             statusDiv.innerHTML = "<span style='color: green;'>Quét hoàn tất.</span>";
-            fontListArea.style.display = 'block';
-
         } catch (error) {
             console.error("Lỗi quét file:", error);
             statusDiv.innerHTML = "<span style='color: red;'>Lỗi khi đọc file PDF.</span>";
@@ -317,7 +341,7 @@
             return;
         }
 
-        statusDiv.innerHTML = "Đang gỡ bỏ dữ liệu nhúng và tối ưu dung lượng...";
+        statusDiv.innerHTML = "Đang tiến hành tối ưu hoá luồng dữ liệu...";
 
         try {
             let removedCount = 0;
@@ -341,18 +365,26 @@
             });
 
             if (removedCount > 0) {
-                // Bước 2: Tạo PDF trống mới
-                const newPdfDoc = await PDFLib.PDFDocument.create();
+                let modifiedPdfBytes;
+                const threshold = 15 * 1024 * 1024; // Ngưỡng tối ưu hoá lai: 15MB
 
-                // Bước 3: Sao chép trang để loại bỏ hoàn toàn đối tượng mồ côi (dọn rác RAM)
-                const pageIndices = globalPdfDoc.getPageIndices();
-                const copiedPages = await newPdfDoc.copyPages(globalPdfDoc, pageIndices);
-                
-                copiedPages.forEach(page => {
-                    newPdfDoc.addPage(page);
-                });
+                // Bước 2: Tối ưu hoá tài liệu theo kích thước file để chống treo máy
+                if (uploadedFileSize < threshold) {
+                    statusDiv.innerHTML = "Đang chạy chế độ tối ưu hoá sâu...";
+                    const newPdfDoc = await PDFLib.PDFDocument.create();
+                    const pageIndices = globalPdfDoc.getPageIndices();
+                    const copiedPages = await newPdfDoc.copyPages(globalPdfDoc, pageIndices);
+                    
+                    copiedPages.forEach(page => {
+                        newPdfDoc.addPage(page);
+                    });
 
-                const modifiedPdfBytes = await newPdfDoc.save();
+                    modifiedPdfBytes = await newPdfDoc.save({ useObjectStreams: true });
+                    globalPdfDoc = newPdfDoc; // Đồng bộ tài liệu làm việc mới
+                } else {
+                    statusDiv.innerHTML = "Tệp lớn, đang chạy chế độ lưu siêu tốc tránh treo máy...";
+                    modifiedPdfBytes = await globalPdfDoc.save({ useObjectStreams: true });
+                }
 
                 const fileInput = document.getElementById('pdfFile');
                 const originalName = fileInput.files[0].name;
@@ -374,9 +406,8 @@
 
                 statusDiv.innerHTML = `<span style='color: green;'>Đã tối ưu hoá thành công! File mới đã được tải xuống thiết bị của bạn.</span>`;
                 
-                // Đồng bộ dữ liệu làm việc mới và quét lại danh sách font
-                globalPdfDoc = newPdfDoc;
-                handleFileSelect(fileInput.files);
+                // Cập nhật lại giao diện hiển thị từ cấu trúc tài liệu hiện tại trong bộ nhớ RAM
+                scanAndRenderFonts();
                  
             } else {
                 statusDiv.innerHTML = "<span style='color: red;'>Không tìm thấy dữ liệu font để gỡ bỏ.</span>";
