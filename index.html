@@ -1,0 +1,393 @@
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gỡ bỏ Font & Giảm dung lượng PDF - D.T.</title>
+    
+    <!-- Thử tải từ CDN của tác giả -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    
+    <!-- Phương án dự phòng: Nếu không tải được từ CDN, tự động nạp file từ thư mục cục bộ "js" -->
+    <script>
+        if (typeof PDFLib === 'undefined') {
+            document.write('<script src="js/pdf-lib.min.js"><\/script>');
+        }
+    </script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-weight: normal;
+            font-size: 1.1rem;
+            margin: 0;
+            padding: 1rem 0.5rem 5rem 0.5rem;
+            background-color: #f8f9fa;
+            color: #212529;
+            max-width: 45rem;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        h1 {
+            font-size: 1.6rem;
+            font-weight: bold;
+            text-align: center;
+            margin-top: 0;
+            margin-bottom: 0.5rem;
+        }
+        .author-name {
+            font-style: normal;
+            font-size: 1.2rem;
+            text-align: right;
+            margin-bottom: 1.5rem;
+            color: #495057;
+        }
+        h2 {
+            font-size: 1.4rem;
+            font-weight: bold;
+            margin-top: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        h3 {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        /* Thiết kế khu vực kéo thả file */
+        .drop-zone {
+            border: 2px dashed #007bff;
+            border-radius: 0.5rem;
+            padding: 0.5rem;
+            text-align: center;
+            background-color: #ffffff;
+            cursor: pointer;
+            transition: background-color 0.2s, border-color 0.2s;
+            margin-bottom: 1.5rem;
+        }
+        .drop-zone.dragover {
+            background-color: #e2e6ea;
+            border-color: #0056b3;
+        }
+        .drop-zone p {
+            margin: 0;
+            font-size: 1.1rem;
+            font-weight: bold;
+            color: #495057;
+        }
+        .drop-zone span {
+            font-size: 0.9rem;
+            color: #6c757d;
+            display: block;
+            margin-top: 0.5rem;
+        }
+        
+        button {
+            padding: 0.5rem 1rem;
+            background-color: #28a745;
+            color: white;
+            border: 2px solid #218838;
+            border-radius: 0.25rem;
+            cursor: pointer;
+            font-size: 1.1rem;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #218838;
+        }
+        
+        .font-list-area {
+            margin-top: 1.5rem;
+            padding: 0.5rem;
+            background-color: #ffffff;
+            border-radius: 0.5rem;
+            border-left: 6px solid #007bff;
+            border-top: 2px solid #ddd;
+            border-right: 2px solid #ddd;
+            border-bottom: 2px solid #ddd;
+        }
+        .font-item {
+            padding: 0.5rem 0;
+            border-bottom: 2px dashed #ccc;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .font-item:last-child {
+            border-bottom: none;
+        }
+        .font-item label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            width: 70%;
+            font-weight: normal;
+        }
+        .font-item input[type="checkbox"] {
+            margin-right: 0.8rem;
+            transform: scale(1.2);
+            cursor: pointer;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            font-size: 0.9rem;
+            font-weight: bold;
+            border-radius: 0.25rem;
+        }
+        .badge-embedded {
+            background-color: #ffeeba;
+            color: #856404;
+        }
+        .badge-reference {
+            background-color: #e2e3e5;
+            color: #383d41;
+        }
+        #status {
+            margin-top: 1rem;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Gỡ bỏ Font & Tối ưu dung lượng PDF</h1>
+    <div class="author-name">D.T.Chánh</div>
+    
+    <!-- Khung kéo thả file (Click vào cũng có thể chọn file) -->
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('pdfFile').click()">
+        <p>Kéo thả file PDF vào đây hoặc click để chọn file</p>
+        <span id="fileNameDisplay">Chấp nhận định dạng .pdf</span>
+        <input type="file" id="pdfFile" accept=".pdf" style="display: none;" onchange="handleFileSelect(this.files)">
+    </div>
+
+    <div id="status"></div>
+
+    <div id="fontListArea" class="font-list-area" style="display: none;">
+        <h3>Chọn các Font muốn gỡ dữ liệu nhúng để tối ưu dung lượng:</h3>
+        <div id="fontList"></div>
+        <div style="margin-top: 1.5rem;">
+            <button onclick="removeSelectedFonts()">Gỡ Font đã chọn & Tải file về</button>
+        </div>
+    </div>
+
+<script>
+    let globalPdfDoc = null;
+    let foundFonts = [];
+    let currentDownloadUrl = null;
+
+    const dropZone = document.getElementById('dropZone');
+    const fileNameDisplay = document.getElementById('fileNameDisplay');
+    const statusDiv = document.getElementById('status');
+    const fontListArea = document.getElementById('fontListArea');
+    const fontListDiv = document.getElementById('fontList');
+
+    // Thiết lập sự kiện Kéo - Thả
+    ['dragenter', 'dragover'].forEach(evt => {
+        dropZone.addEventListener(evt, (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+    });
+
+    ['dragleave', 'drop'].forEach(evt => {
+        dropZone.addEventListener(evt, (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+        });
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            const fileInput = document.getElementById('pdfFile');
+            fileInput.files = files; // Đồng bộ danh sách file vào input ẩn
+            handleFileSelect(files);
+        }
+    });
+
+    // Reset trạng thái ứng dụng và dọn dẹp bộ nhớ RAM từ các tệp cũ
+    function resetApp() {
+        globalPdfDoc = null;
+        foundFonts = [];
+        fontListArea.style.display = 'none';
+        statusDiv.innerHTML = '';
+        fileNameDisplay.innerHTML = 'Chấp nhận định dạng .pdf';
+        
+        if (currentDownloadUrl) {
+            URL.revokeObjectURL(currentDownloadUrl);
+            currentDownloadUrl = null;
+        }
+    }
+
+    // Xử lý đọc file và tự động quét font ngay lập tức
+    async function handleFileSelect(files) {
+        if (files.length === 0) return;
+        const file = files[0];
+        
+        if (file.type !== "application/pdf") {
+            resetApp();
+            statusDiv.innerHTML = "<span style='color: red;'>Vui lòng chọn đúng định dạng file .pdf</span>";
+            return;
+        }
+
+        resetApp();
+        fileNameDisplay.innerHTML = `<strong>File đang chọn:</strong> ${file.name}`;
+        statusDiv.innerHTML = "Đang quét các đối tượng Font...";
+
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            globalPdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
+            
+            const context = globalPdfDoc.context;
+            const indirectObjects = context.enumerateIndirectObjects();
+            let fontCounter = 1;
+
+            for (const [ref, obj] of indirectObjects) {
+                if (obj instanceof PDFLib.PDFDict && obj.get(PDFLib.PDFName.of('Type')) === PDFLib.PDFName.of('FontDescriptor')) {
+                    const fontNameObj = obj.get(PDFLib.PDFName.of('FontName'));
+                    if (fontNameObj) {
+                        let fontName = fontNameObj.toString();
+                        if (fontName.includes('+')) {
+                            fontName = fontName.split('+')[1];
+                        }
+
+                        let isEmbedded = false;
+                        const embeddedKeys = ['FontFile', 'FontFile2', 'FontFile3'];
+                        embeddedKeys.forEach(key => {
+                            if (obj.has(PDFLib.PDFName.of(key))) {
+                                isEmbedded = true;
+                            }
+                        });
+
+                        foundFonts.push({
+                            id: fontCounter++,
+                            name: fontName,
+                            descriptorObj: obj,
+                            isEmbedded: isEmbedded
+                        });
+                    }
+                }
+            }
+
+            if (foundFonts.length === 0) {
+                statusDiv.innerHTML = "<span style='color: orange;'>Không tìm thấy font nhúng nào trong tài liệu này.</span>";
+                return;
+            }
+
+            fontListDiv.innerHTML = '';
+            foundFonts.forEach(font => {
+                const badge = font.isEmbedded 
+                    ? `<span class="badge badge-embedded">Có dữ liệu nhúng</span>` 
+                    : `<span class="badge badge-reference">Chỉ tham chiếu (Không nhúng)</span>`;
+                
+                const checkbox = font.isEmbedded
+                    ? `<input type="checkbox" class="font-checkbox" value="${font.id}" id="chk-${font.id}">`
+                    : `<input type="checkbox" disabled id="chk-${font.id}">`;
+
+                fontListDiv.innerHTML += `
+                    <div class="font-item">
+                        <label for="chk-${font.id}">
+                            ${checkbox}
+                            <span><strong>${font.id}.</strong> ${font.name}</span>
+                        </label>
+                        ${badge}
+                    </div>
+                `;
+            });
+
+            statusDiv.innerHTML = "<span style='color: green;'>Quét hoàn tất.</span>";
+            fontListArea.style.display = 'block';
+
+        } catch (error) {
+            console.error("Lỗi quét file:", error);
+            statusDiv.innerHTML = "<span style='color: red;'>Lỗi khi đọc file PDF.</span>";
+        }
+    }
+
+    async function removeSelectedFonts() {
+        const checkedBoxes = document.querySelectorAll('.font-checkbox:checked');
+
+        if (checkedBoxes.length === 0) {
+            alert("Vui lòng chọn ít nhất một font để gỡ.");
+            return;
+        }
+
+        statusDiv.innerHTML = "Đang gỡ bỏ dữ liệu nhúng và tối ưu dung lượng...";
+
+        try {
+            let removedCount = 0;
+
+            // Bước 1: Gỡ liên kết dữ liệu nhúng của các font đã chọn
+            checkedBoxes.forEach(box => {
+                const selectedId = parseInt(box.value);
+                const targetFont = foundFonts.find(f => f.id === selectedId);
+                
+                if (targetFont) {
+                    const descriptor = targetFont.descriptorObj;
+                    const fileKeys = ['FontFile', 'FontFile2', 'FontFile3'];
+                    
+                    fileKeys.forEach(key => {
+                        if (descriptor.has(PDFLib.PDFName.of(key))) {
+                            descriptor.delete(PDFLib.PDFName.of(key));
+                            removedCount++;
+                        }
+                    });
+                }
+            });
+
+            if (removedCount > 0) {
+                // Bước 2: Tạo PDF trống mới
+                const newPdfDoc = await PDFLib.PDFDocument.create();
+
+                // Bước 3: Sao chép trang để loại bỏ hoàn toàn đối tượng mồ côi (dọn rác RAM)
+                const pageIndices = globalPdfDoc.getPageIndices();
+                const copiedPages = await newPdfDoc.copyPages(globalPdfDoc, pageIndices);
+                
+                copiedPages.forEach(page => {
+                    newPdfDoc.addPage(page);
+                });
+
+                const modifiedPdfBytes = await newPdfDoc.save();
+
+                const fileInput = document.getElementById('pdfFile');
+                const originalName = fileInput.files[0].name;
+                const blob = new Blob([modifiedPdfBytes], { type: 'application/pdf' });
+                
+                const suggestedName = `optimized_${originalName}`;
+
+                // Giải phóng bộ nhớ liên kết cũ trước khi tạo liên kết mới
+                if (currentDownloadUrl) {
+                    URL.revokeObjectURL(currentDownloadUrl);
+                }
+                currentDownloadUrl = URL.createObjectURL(blob);
+
+                // Thực hiện tải file xuống trực tiếp (Tương thích 100% mọi thiết bị)
+                const link = document.createElement('a');
+                link.href = currentDownloadUrl;
+                link.download = suggestedName;
+                link.click();
+
+                statusDiv.innerHTML = `<span style='color: green;'>Đã tối ưu hoá thành công! File mới đã được tải xuống thiết bị của bạn.</span>`;
+                
+                // Đồng bộ dữ liệu làm việc mới và quét lại danh sách font
+                globalPdfDoc = newPdfDoc;
+                handleFileSelect(fileInput.files);
+                 
+            } else {
+                statusDiv.innerHTML = "<span style='color: red;'>Không tìm thấy dữ liệu font để gỡ bỏ.</span>";
+            }
+
+        } catch (error) {
+            console.error("Lỗi xử lý file:", error);
+            statusDiv.innerHTML = "<span style='color: red;'>Lỗi khi xử lý file. Vui lòng thử lại.</span>";
+        }
+    }
+</script>
+
+</body>
+</html>
